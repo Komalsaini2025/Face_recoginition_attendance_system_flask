@@ -64,6 +64,79 @@ def save_encodings():
         pickle.dump((known_encodings, known_names), f)
 
 
+def _mark_attendance_for_name(name):
+    """Create an Attendance DB entry for `name` if debounce allows."""
+    now = datetime.now()
+    last = last_marked.get(name)
+    if last and (now - last).total_seconds() < MARK_DEBOUNCE_SECONDS:
+        return False
+
+    session = SessionLocal()
+    try:
+        entry = Attendance(name=name, date=now.date(), time=now.time())
+        session.add(entry)
+        session.commit()
+        last_marked[name] = now
+        speak(f"Attendance marked for {name}")
+        return True
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def camera_loop():
+    """Background loop that captures frames from default camera and recognizes faces."""
+    global camera_running
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        camera_running = False
+        return
+
+    try:
+        while camera_running:
+            ret, frame = cap.read()
+            if not ret:
+                time.sleep(0.1)
+                continue
+
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            try:
+                face_locations = face_recognition.face_locations(rgb)
+                encodings = face_recognition.face_encodings(rgb, face_locations)
+            except Exception:
+                encodings = []
+
+            for encoding in encodings:
+                if len(known_encodings) == 0:
+                    continue
+
+                distances = face_recognition.face_distance(known_encodings, encoding)
+                best = np.argmin(distances)
+                is_match = False
+                try:
+                    is_match = face_recognition.compare_faces([known_encodings[best]], encoding, tolerance=0.45)[0]
+                except Exception:
+                    is_match = False
+
+                if is_match and distances[best] < 0.45:
+                    name = known_names[best]
+                    try:
+                        _mark_attendance_for_name(name)
+                    except Exception:
+                        # ignore DB errors in background loop
+                        pass
+
+            # small sleep to reduce CPU usage
+            time.sleep(0.2)
+    finally:
+        try:
+            cap.release()
+        except Exception:
+            pass
+
+
 # ------------------------------------------------------------------------------
 # 📌 API: Recognize Face
 # ------------------------------------------------------------------------------
@@ -169,6 +242,40 @@ def register_form():
         "</form>"
         "</body></html>"
     )
+
+
+# Start camera background processing
+@app.route("/start_camera", methods=["POST", "GET"])
+def start_camera():
+    global camera_thread, camera_running
+    if camera_running:
+        return jsonify({"status": "already_running"})
+
+    camera_running = True
+    camera_thread = threading.Thread(target=camera_loop, daemon=True)
+    camera_thread.start()
+    return jsonify({"status": "started"})
+
+
+@app.route("/stop_camera", methods=["POST", "GET"])
+def stop_camera():
+    global camera_thread, camera_running
+    if not camera_running:
+        return jsonify({"status": "not_running"})
+
+    camera_running = False
+    # thread is daemon; give it a moment to stop
+    time.sleep(0.5)
+    camera_thread = None
+    return jsonify({"status": "stopped"})
+
+
+@app.route("/camera_status", methods=["GET"])
+def camera_status():
+    return jsonify({
+        "running": bool(camera_running),
+        "tracked_people": list(last_marked.keys())
+    })
 
 
 # ------------------------------------------------------------------------------
