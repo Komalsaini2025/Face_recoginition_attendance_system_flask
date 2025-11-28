@@ -7,6 +7,8 @@ import os
 from datetime import datetime
 import sys
 import os
+import threading
+import time
 
 # Ensure project root is on sys.path so imports like `config` and `models`
 # (which live in the repository root) can be imported when running
@@ -36,6 +38,13 @@ if os.path.exists(ENCODINGS_FILE):
         # Empty or corrupted file — start fresh
         known_encodings = []
         known_names = []
+
+        # Camera control globals
+        camera_thread = None
+        camera_running = False
+        # track last attendance mark time per person to avoid duplicates (seconds)
+        last_marked = {}
+        MARK_DEBOUNCE_SECONDS = 60
 else:
     known_encodings = []
     known_names = []
