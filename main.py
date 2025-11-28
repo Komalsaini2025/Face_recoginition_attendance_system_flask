@@ -5,6 +5,16 @@ import numpy as np
 import pickle
 import os
 from datetime import datetime
+import sys
+import os
+
+# Ensure project root is on sys.path so imports like `config` and `models`
+# (which live in the repository root) can be imported when running
+# this file from the subfolder.
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from config import SessionLocal
 from models import Face, Attendance
 import pyttsx3
@@ -19,8 +29,13 @@ os.makedirs(FACES_FOLDER, exist_ok=True)
 
 # Load encodings
 if os.path.exists(ENCODINGS_FILE):
-    with open(ENCODINGS_FILE, "rb") as f:
-        known_encodings, known_names = pickle.load(f)
+    try:
+        with open(ENCODINGS_FILE, "rb") as f:
+            known_encodings, known_names = pickle.load(f)
+    except (EOFError, pickle.UnpicklingError):
+        # Empty or corrupted file — start fresh
+        known_encodings = []
+        known_names = []
 else:
     known_encodings = []
     known_names = []
@@ -103,6 +118,48 @@ def recognize():
 
     session.close()
     return jsonify(results)
+
+
+# Simple health endpoint so visiting `/` in a browser doesn't return 405.
+@app.route("/", methods=["GET"])
+def index():
+    return jsonify({
+        "status": "ok",
+        "routes": [
+            "/recognize (POST)",
+            "/register (POST)",
+            "/attendance (GET)"
+        ]
+    })
+
+
+# Browser-friendly test form for /recognize (so visiting in a browser won't show 405)
+@app.route("/recognize", methods=["GET"])
+def recognize_form():
+    return (
+        "<html><body>"
+        "<h2>Recognize Face (POST)</h2>"
+        "<form method=\"post\" action=\"/recognize\" enctype=\"multipart/form-data\">"
+        "Image: <input type=\"file\" name=\"image\" accept=\"image/*\"><br><br>"
+        "<input type=\"submit\" value=\"Upload and Recognize\">"
+        "</form>"
+        "</body></html>"
+    )
+
+
+# Browser-friendly test form for /register
+@app.route("/register", methods=["GET"])
+def register_form():
+    return (
+        "<html><body>"
+        "<h2>Register Face (POST)</h2>"
+        "<form method=\"post\" action=\"/register\" enctype=\"multipart/form-data\">"
+        "Name: <input type=\"text\" name=\"name\"><br><br>"
+        "Image: <input type=\"file\" name=\"image\" accept=\"image/*\"><br><br>"
+        "<input type=\"submit\" value=\"Register\">"
+        "</form>"
+        "</body></html>"
+    )
 
 
 # ------------------------------------------------------------------------------
